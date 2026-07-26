@@ -28,3 +28,5 @@ IF IT SAYS NOW LISTENING ON: http://localhost:5042
 YOU ARE GOOD (probably, we will actually see after you send the register request XD because the sql db might have broken or smtn)
 
 NOW GO TO FRONTEND PROJECT OVER AT https://github.com/erenakyildiz-code/PublicBaratrumDesktopApp.git
+
+<img width="1718" height="1742" alt="diag drawio" src="https://github.com/user-attachments/assets/03acaf30-1ca0-4b29-b9f5-f3901dc149d6" />
