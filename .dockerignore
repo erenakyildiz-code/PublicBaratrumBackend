@@ -1,0 +1,13 @@
+# Ignore sensitive production settings
+appsettings.Production.json
+
+# Ignore user secrets (local development)
+.microsoft/usersecrets/
+secrets.json
+
+# Standard build/publish artifacts to keep images clean
+bin/
+obj/
+*.user
+*.userosscache
+*.sln.docstates
