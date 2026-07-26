@@ -42,5 +42,10 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
-
+<ItemGroup>
+  <Content Include="system.txt">
+    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    <Link>Storage\system.txt</Link>
+  </Content>
+</ItemGroup>
 </Project>
