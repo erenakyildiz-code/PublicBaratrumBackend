@@ -7,19 +7,21 @@ GET IN THE REPO
 RUN THE SQL SERVER
 UPDATE DATABASE
 
-"""
+```bash
 git clone https://github.com/erenakyildiz-code/PublicBaratrumBackend.git
 cd PublicBaratrumBackend
 docker compose up
 dotnet ef database update
-"""
+```
 
 LOOK INSIDE AuthApp.csproj
 
 ARE THE ENDPOINTS CORRECT ? DO YOUR ENDPOINTS NEED AUTH HEADERS ? SET THEM THERE.
 
 THEN:
+```bash
 dotnet run
+```
 
 IF IT SAYS NOW LISTENING ON: http://localhost:5042
 
