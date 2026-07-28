@@ -47,11 +47,6 @@ ScaffoldingReadMe.txt
 *.nupkg
 # NuGet Symbol Packages
 *.snupkg
-<<<<<<< HEAD
-=======
-
-# dotenv environment variables file
->>>>>>> 65d1dd37f02bc1930207295d5eb3aa3944d4522e
 .env
 
 # Others
