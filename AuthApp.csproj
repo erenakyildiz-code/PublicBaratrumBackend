@@ -23,5 +23,14 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+<<<<<<< HEAD
 
+=======
+<ItemGroup>
+  <Content Include="system.txt">
+    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    <Link>Storage\system.txt</Link>
+  </Content>
+</ItemGroup>
+>>>>>>> 65d1dd37f02bc1930207295d5eb3aa3944d4522e
 </Project>

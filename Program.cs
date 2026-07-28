@@ -71,11 +71,15 @@ builder.Services.AddHttpClient();
 builder.Services.AddControllers();
 
 var app = builder.Build();
+<<<<<<< HEAD
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
 }
+=======
+
+>>>>>>> 65d1dd37f02bc1930207295d5eb3aa3944d4522e
 // Enable classic Swagger middleware
 if (app.Environment.IsDevelopment())
 {
