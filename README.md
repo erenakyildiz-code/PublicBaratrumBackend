@@ -18,9 +18,19 @@ docker compose up
 dotnet ef database update
 ```
 
-LOOK INSIDE AuthApp.csproj
+You will want to set the environment variables, they come from .env
+check out METADATA.cs
+```bash
 
-ARE THE ENDPOINTS CORRECT ? DO YOUR ENDPOINTS NEED AUTH HEADERS ? SET THEM THERE.
+    public static readonly string BRAIN = Meta("BrainEndpoint", "http://127.0.0.1:8080");
+    public static readonly string EARS  = Meta("EarsEndpoint",  "http://127.0.0.1:8000");
+    public static readonly string MOUTH = Meta("MouthEndpoint", "https://devil-macbook-air-2.tail1737c0.ts.net");
+    public static readonly bool RUNNINGLOCAL = MetaBool("RunningLocal", false);
+
+    public static readonly Dictionary<string, string> BRAIN_HEADERS = MetaHeaders("BrainHeaders");
+    public static readonly Dictionary<string, string> EARS_HEADERS  = MetaHeaders("EarsHeaders");
+    public static readonly Dictionary<string, string> MOUTH_HEADERS = MetaHeaders("MouthHeaders");
+```
 
 THEN:
 ```bash
