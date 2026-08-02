@@ -96,19 +96,23 @@ public class MainController : ControllerBase
         string ltmString = string.Join("\n", ltmRecords);
         string stmString = string.Join("\n", stmRecords);
 
-        string prompt = $"<bos><start_of_turn>user\n{sysContent}\n\n### LONG TERM MEMORY ###\n{ltmString}\n\n### RECENT CONVERSATION ###\n{stmString}\n\nUser: {userText}<end_of_turn>\n<start_of_turn>model\n";
-        
+        // GLM version: no manual tokens. --jinja on llama-server applies the embedded GLM template.
+        var messages = new List<object>
+        {
+            new { role = "system", content = $"{sysContent}\n\n### LONG TERM MEMORY ###\n{ltmString}\n\n### RECENT CONVERSATION ###\n{stmString}" },
+            new { role = "user", content = userText }
+        };
 
         if (skipAudio)
         {
-            string reply = await LlmTextOnly(userId, prompt, userText);
+            string reply = await LlmTextOnly(userId, messages, userText);
             return Ok(new { status = "success", text = reply });
         }
 
-        _ = Task.Run(() => LlmWorkerThread(userId, sessionId, prompt, userText, state));
+        _ = Task.Run(() => LlmWorkerThread(userId, sessionId, messages, userText, state));
         return Ok(new { status = "success", session_id = sessionId });
     }
-    private async Task LlmWorkerThread(string userId, string sessionId, string prompt, string userText, SessionState state)
+    private async Task LlmWorkerThread(string userId, string sessionId, List<object> messages, string userText, SessionState state)
     {
         string targetLanguage = "en"; 
         var user = await _db.Users
@@ -173,63 +177,106 @@ public class MainController : ControllerBase
             }
         });
     
-        string rawResponse = "", cleanText = "";
-        int lastSentIndex = 0;
-        var req = new { prompt, n_predict = 2400, temperature = 0.6, repeat_penalty = 1.15, stop = new[] { "<end_of_turn>", "<eos>", "User:" }, stream = true };
-        
-        try {
-            using var msg = new HttpRequestMessage(HttpMethod.Post, $"{BRAIN}/completion") { Content = new StringContent(JsonSerializer.Serialize(req), Encoding.UTF8, "application/json") }.WithHeaders(METADATA.BRAIN_HEADERS);;
-            using var response = await http.SendAsync(msg, HttpCompletionOption.ResponseHeadersRead);
-            using var stream = await response.Content.ReadAsStreamAsync();
-            using var reader = new StreamReader(stream);
+         string rawResponse = "", cleanText = "";
+    int lastSentIndex = 0;
 
-            while (await reader.ReadLineAsync() is string line) {
-                if (state.InterruptedAt.HasValue) break;
+    // GLM official sampling: temp 1.0 / top_p 0.95 / min_p 0.01, repeat penalty OFF.
+    var req = new {
+        messages,
+        max_tokens = 2400,
+        temperature = 1.0,
+        top_p = 0.95,
+        min_p = 0.01,
+        repeat_penalty = 1.0,
+        stream = true,
+        chat_template_kwargs = new { enable_thinking = false }
+    };
 
-                if (!line.StartsWith("data: ")) continue;
-                try {
-                    var token = JsonSerializer.Deserialize<JsonElement>(line["data: ".Length..]).GetProperty("content").GetString() ?? "";
-                    rawResponse += token;
+    try {
+        using var msg = new HttpRequestMessage(HttpMethod.Post, $"{BRAIN}/v1/chat/completions") { Content = new StringContent(JsonSerializer.Serialize(req), Encoding.UTF8, "application/json") }.WithHeaders(METADATA.BRAIN_HEADERS);
+        using var response = await http.SendAsync(msg, HttpCompletionOption.ResponseHeadersRead);
+        using var stream = await response.Content.ReadAsStreamAsync();
+        using var reader = new StreamReader(stream);
 
-                    int openTagIndex = rawResponse.LastIndexOf("<|channel>thought");
-                    int closeTagIndex = rawResponse.LastIndexOf("<channel|>");
-                    
-                    if (openTagIndex != -1 && (closeTagIndex == -1 || closeTagIndex < openTagIndex)) {
-                        continue; 
+        bool sawThinking = false;
+        bool thinkingLogged = false;
+        var thinkStart = DateTime.UtcNow;
+        var thinkingBuffer = new StringBuilder();
+        while (await reader.ReadLineAsync() is string line) {
+            if (state.InterruptedAt.HasValue) break;
+
+            if (!line.StartsWith("data: ")) continue;
+            if (line == "data: [DONE]") break;
+
+            try {
+                var root = JsonSerializer.Deserialize<JsonElement>(line["data: ".Length..]);
+                var delta = root.GetProperty("choices")[0].GetProperty("delta");
+
+                // Track that thinking is happening
+                if (delta.TryGetProperty("reasoning_content", out var rc) &&
+                    rc.ValueKind == JsonValueKind.String &&
+                    !string.IsNullOrEmpty(rc.GetString()))
+                {
+                    sawThinking = true;
+                    thinkingBuffer.Append(rc.GetString());
+                }
+
+                string token = delta.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String
+                    ? c.GetString() ?? ""
+                    : "";
+                if (token.Length == 0) continue;
+
+                // First visible token after thinking = thinking is over
+                if (!thinkingLogged)
+                {
+                    thinkingLogged = true;
+                    var elapsed = (DateTime.UtcNow - thinkStart).TotalSeconds;
+                    if (sawThinking)
+                    {
+                        Console.WriteLine($"[LLM] Session {sessionId}: thinking done in {elapsed:F1}s, response streaming now.");
+                        Console.WriteLine($"[LLM] Session {sessionId} THOUGHT: {thinkingBuffer}");
                     }
-
-                    cleanText = Regex.Replace(rawResponse, @"<\|channel>thought.*?<channel\|>", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
-
-                    if (Regex.Matches(cleanText, @"\*+").Count % 2 != 0) {
-                        continue;
+                    else
+                    {
+                        Console.WriteLine($"[LLM] Session {sessionId}: no thinking, first token in {elapsed:F1}s.");
                     }
-                    
-                    cleanText = Regex.Replace(cleanText, @"\*+\s*[^\s*]+(?:\s+[^\s*]+)+\s*\*+", " ");
-                    cleanText = Regex.Replace(cleanText, @"[\u2018\u2019\u0060\u00B4\u02BC]", "'");
-                    cleanText = Regex.Replace(cleanText, @"^(?:QT:\s*)+", "").Trim();
-                    cleanText = Regex.Replace(cleanText, @"\s+", " ");
+                }
 
-                    bool useAggressive = state.Chunks.Count < 7;
-                    string pattern = useAggressive ? @"(?<=[.,!?;:]) +" : @"(?<=[.!?]) +";
+                rawResponse += token;
 
-                    string unprocessed = cleanText.Substring(lastSentIndex);
-                    var matches = Regex.Matches(unprocessed, pattern);
-                    
-                    if (matches.Count > 0) {
-                        var chunks = Regex.Split(unprocessed, pattern);
-                        
-                        for (int i = 0; i < chunks.Length - 1; i++) {
-                            var chunk = chunks[i].Trim();
-                            if (!string.IsNullOrEmpty(chunk)) {
-                                state.Chunks.Add(chunk);
-                                audioQueue.Writer.TryWrite((state.Chunks.Count - 1, chunk));
-                            }
+                // Belt-and-braces: strip <think> blocks if any leak into content anyway.
+                cleanText = Regex.Replace(rawResponse, @"<think>.*?</think>", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+
+                if (Regex.Matches(cleanText, @"\*+").Count % 2 != 0) {
+                    continue;
+                }
+
+                cleanText = Regex.Replace(cleanText, @"\*+\s*[^\s*]+(?:\s+[^\s*]+)+\s*\*+", " ");
+                cleanText = Regex.Replace(cleanText, @"[\u2018\u2019\u0060\u00B4\u02BC]", "'");
+                cleanText = Regex.Replace(cleanText, @"^(?:QT:\s*)+", "").Trim();
+                cleanText = Regex.Replace(cleanText, @"\s+", " ");
+
+                bool useAggressive = state.Chunks.Count < 7;
+                string pattern = useAggressive ? @"(?<=[.,!?;:]) +" : @"(?<=[.!?]) +";
+
+                string unprocessed = cleanText.Substring(lastSentIndex);
+                var matches = Regex.Matches(unprocessed, pattern);
+
+                if (matches.Count > 0) {
+                    var chunks = Regex.Split(unprocessed, pattern);
+
+                    for (int i = 0; i < chunks.Length - 1; i++) {
+                        var chunk = chunks[i].Trim();
+                        if (!string.IsNullOrEmpty(chunk)) {
+                            state.Chunks.Add(chunk);
+                            audioQueue.Writer.TryWrite((state.Chunks.Count - 1, chunk));
                         }
-                        
-                        var lastMatch = matches[matches.Count - 1];
-                        lastSentIndex += lastMatch.Index + lastMatch.Length;
                     }
-                } catch { /* Ignore partial JSON */ }
+
+                    var lastMatch = matches[matches.Count - 1];
+                    lastSentIndex += lastMatch.Index + lastMatch.Length;
+                }
+            } catch { /* Ignore partial JSON */ }
             }
 
             string finalChunk = cleanText.Substring(lastSentIndex).Trim();
@@ -266,51 +313,66 @@ public class MainController : ControllerBase
         }
     }
 
-    private async Task<string> LlmTextOnly(string userId, string prompt, string userText)
+    private async Task<string> LlmTextOnly(string userId, List<object> messages, string userText)
+{
+    var http = _httpFactory.CreateClient();
+    http.Timeout = TimeSpan.FromMinutes(5);
+
+    string rawResponse = "";
+    var req = new
     {
-        var http = _httpFactory.CreateClient();
-        http.Timeout = TimeSpan.FromMinutes(5);
+        messages,
+        max_tokens = 2400,
+        temperature = 1.0,
+        top_p = 0.95,
+        min_p = 0.01,
+        repeat_penalty = 1.0,
+        stream = true
+    };
 
-        string rawResponse = "";
-        var req = new { prompt, n_predict = 2400, temperature = 0.6, repeat_penalty = 1.15, stop = new[] { "<end_of_turn>", "<eos>", "User:" }, stream = true };
+    using var msg = new HttpRequestMessage(HttpMethod.Post, $"{BRAIN}/v1/chat/completions") { Content = new StringContent(JsonSerializer.Serialize(req), Encoding.UTF8, "application/json") }.WithHeaders(METADATA.BRAIN_HEADERS);
+    using var response = await http.SendAsync(msg, HttpCompletionOption.ResponseHeadersRead);
+    using var stream = await response.Content.ReadAsStreamAsync();
+    using var reader = new StreamReader(stream);
 
-        using var msg = new HttpRequestMessage(HttpMethod.Post, $"{BRAIN}/completion") { Content = new StringContent(JsonSerializer.Serialize(req), Encoding.UTF8, "application/json") }.WithHeaders(METADATA.BRAIN_HEADERS);
-        using var response = await http.SendAsync(msg, HttpCompletionOption.ResponseHeadersRead);
-        using var stream = await response.Content.ReadAsStreamAsync();
-        using var reader = new StreamReader(stream);
+    while (await reader.ReadLineAsync() is string line)
+    {
+        if (!line.StartsWith("data: ")) continue;
+        if (line == "data: [DONE]") break;
 
-        while (await reader.ReadLineAsync() is string line)
+        try
         {
-            if (!line.StartsWith("data: ")) continue;
+            var root = JsonSerializer.Deserialize<JsonElement>(line["data: ".Length..]);
+            var delta = root.GetProperty("choices")[0].GetProperty("delta");
 
-            try
-            {
-                rawResponse += JsonSerializer.Deserialize<JsonElement>(line["data: ".Length..]).GetProperty("content").GetString() ?? "";
-            }
-            catch { /* Ignore partial JSON */ }
+            // thinking lives in delta.reasoning_content — never read it
+            if (delta.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String)
+                rawResponse += c.GetString() ?? "";
         }
-
-        // same cleanup pipeline as the audio path, applied once to the full text
-        string cleanText = Regex.Replace(rawResponse, @"<\|channel>thought.*?<channel\|>", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
-        cleanText = Regex.Replace(cleanText, @"\*+\s*[^\s*]+(?:\s+[^\s*]+)+\s*\*+", " ");
-        cleanText = Regex.Replace(cleanText, @"[\u2018\u2019\u0060\u00B4\u02BC]", "'");
-        cleanText = Regex.Replace(cleanText, @"^(?:QT:\s*)+", "").Trim();
-        cleanText = Regex.Replace(cleanText, @"\s+", " ").Trim();
-
-        // write memory, identical format to the audio path
-        var newMemory = new ShortTermMemory
-        {
-            UserId = userId,
-            Memory = $"User: {userText}\nQT: {cleanText}\n",
-            MemoryGenerationDate = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            IsConsumed = false
-        };
-
-        _db.ShortTermMemories.Add(newMemory);
-        await _db.SaveChangesAsync();
-
-        return cleanText;
+        catch { /* Ignore partial JSON */ }
     }
+
+    // same cleanup pipeline as the audio path, applied once to the full text
+    string cleanText = Regex.Replace(rawResponse, @"<think>.*?</think>", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+    cleanText = Regex.Replace(cleanText, @"\*+\s*[^\s*]+(?:\s+[^\s*]+)+\s*\*+", " ");
+    cleanText = Regex.Replace(cleanText, @"[\u2018\u2019\u0060\u00B4\u02BC]", "'");
+    cleanText = Regex.Replace(cleanText, @"^(?:QT:\s*)+", "").Trim();
+    cleanText = Regex.Replace(cleanText, @"\s+", " ").Trim();
+
+    // write memory, identical format to the audio path
+    var newMemory = new ShortTermMemory
+    {
+        UserId = userId,
+        Memory = $"User: {userText}\nQT: {cleanText}\n",
+        MemoryGenerationDate = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+        IsConsumed = false
+    };
+
+    _db.ShortTermMemories.Add(newMemory);
+    await _db.SaveChangesAsync();
+
+    return cleanText;
+}
     // ---------------------------------------------------------
     // OLD TRANSCRIBE ENDPOINT
     // ---------------------------------------------------------
@@ -724,98 +786,89 @@ public class MainController : ControllerBase
         var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
         return File(jsonBytes, "application/json", $"memories_{timestamp}.json");
     }
-    
     [HttpPost("/api/import-memories")]
     public async Task<IActionResult> ImportMemoriesJson(IFormFile file)
     {
-        if (!METADATA.RUNNINGLOCAL)
+        if(!METADATA.RUNNINGLOCAL)
             return BadRequest("MUST RUN LOCALLY");
-
-        if (file == null || file.Length == 0)
+        if (file == null || file.Length == 0) 
             return BadRequest("No file uploaded.");
 
         string userId = GetUserId();
 
-        // Validate the import file BEFORE touching existing data
         using var stream = file.OpenReadStream();
-
+        
         var importData = await JsonSerializer.DeserializeAsync<MemoryExportData>(
-            stream,
+            stream, 
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
         );
 
-        if (importData == null)
+        if (importData == null) 
             return BadRequest("Invalid JSON format.");
 
-        // Fetch existing memories for backup
-        var existingShortTerm = await _db.ShortTermMemories
-            .Where(m => m.UserId == userId)
-            .ToListAsync();
-
-        var existingLongTerm = await _db.LongTermMemories
-            .Where(m => m.UserId == userId)
-            .ToListAsync();
-
-        // Build backup payload
-        var backup = new MemoryExportData
-        {
-            ShortTerm = existingShortTerm.Select(m => new ShortTermMemoryDto
-            {
-                MemoryGenerationDate = m.MemoryGenerationDate,
-                Memory = m.Memory,
-                IsConsumed = m.IsConsumed
-            }).ToList(),
-
-            LongTerm = existingLongTerm.Select(m => new LongTermMemoryDto
-            {
-                MemoryGenerationDate = m.MemoryGenerationDate,
-                Memory = m.Memory
-            }).ToList()
-        };
-
-        // Delete existing memories
-        if (existingShortTerm.Any())
-            _db.ShortTermMemories.RemoveRange(existingShortTerm);
-
-        if (existingLongTerm.Any())
-            _db.LongTermMemories.RemoveRange(existingLongTerm);
-
-        // Import new memories
         if (importData.ShortTerm.Any())
         {
-            var stmEntities = importData.ShortTerm.Select(dto => new ShortTermMemory
-            {
-                UserId = userId,
-                MemoryGenerationDate = dto.MemoryGenerationDate,
-                Memory = dto.Memory,
-                IsConsumed = dto.IsConsumed
+            var stmEntities = importData.ShortTerm.Select(dto => new ShortTermMemory 
+            { 
+                UserId = userId, 
+                MemoryGenerationDate = dto.MemoryGenerationDate, 
+                Memory = dto.Memory, 
+                IsConsumed = dto.IsConsumed 
             });
-
+            
             await _db.ShortTermMemories.AddRangeAsync(stmEntities);
         }
 
         if (importData.LongTerm.Any())
         {
-            var ltmEntities = importData.LongTerm.Select(dto => new LongTermMemory
-            {
-                UserId = userId,
-                MemoryGenerationDate = dto.MemoryGenerationDate,
-                Memory = dto.Memory
+            var ltmEntities = importData.LongTerm.Select(dto => new LongTermMemory 
+            { 
+                UserId = userId, 
+                MemoryGenerationDate = dto.MemoryGenerationDate, 
+                Memory = dto.Memory 
             });
-
+            
             await _db.LongTermMemories.AddRangeAsync(ltmEntities);
         }
 
         await _db.SaveChangesAsync();
 
-        // Return the old data so the client can back it up
-        return Ok(new
-        {
-            status = "success",
-            backedUpMemories = backup
+        return Ok(new 
+        { 
+            status = "success"
         });
     }
     
+    [HttpPost("init-local-user")]
+    [AllowAnonymous]
+    public async Task<IActionResult> InitLocalUser( [FromServices] UserManager<ApplicationUser> _userManager)
+    {
+        if (!METADATA.RUNNINGLOCAL) return NotFound();
+
+        var user = await _userManager.FindByEmailAsync("LOCAL@LOCAL.com");
+        if (user is null) return NotFound();
+
+        if (!user.EmailConfirmed)
+        {
+            user.EmailConfirmed = true;
+            await _userManager.UpdateAsync(user);
+        }
+
+        var balanceExists = await _db.Balances.AnyAsync(b => b.UserId == user.Id);
+        if (!balanceExists)
+        {
+            _db.Balances.Add(new Balance
+            {
+                UserId = user.Id,
+                CurrentBalance = 20.00m,
+                PaidMoneyBefore = false
+            });
+            await _db.SaveChangesAsync();
+        }
+
+        return Ok();
+    }
+
     // ---------------------------------------------------------
     // STREAMED CHAT
     // ---------------------------------------------------------
@@ -1081,6 +1134,8 @@ public class MainController : ControllerBase
     
     private async Task<bool> BalanceCheckerConsumer(string userId, decimal amount)
     {
+        if(METADATA.RUNNINGLOCAL)
+            return true;
         var balance = _db.Balances.FirstOrDefault(entity => entity.UserId == userId);
         if(balance == null || balance.CurrentBalance -  amount < 0){return false;}
         balance.CurrentBalance -= amount;
