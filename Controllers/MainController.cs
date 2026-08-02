@@ -1081,6 +1081,8 @@ public class MainController : ControllerBase
     
     private async Task<bool> BalanceCheckerConsumer(string userId, decimal amount)
     {
+        if(METADATA.RUNNINGLOCAL)
+            return true;
         var balance = _db.Balances.FirstOrDefault(entity => entity.UserId == userId);
         if(balance == null || balance.CurrentBalance -  amount < 0){return false;}
         balance.CurrentBalance -= amount;
