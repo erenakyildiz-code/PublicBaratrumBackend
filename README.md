@@ -4,6 +4,7 @@ READ THE GUIDE: https://github.com/erenakyildiz-code/localInstallGuide.git
 OR EVEN BETTER DONT READ IT AND LET AN LLM READ IT
 
 YOU MAY WANT TO EDIT THE SYSTEM PROMPT LOCATED AT system.txt AT ROOT OF THE PROJECT
+If you wish to use GLM-4.7 as the brain instead of GEMMA4 you can use the branch GLM4.7
 
 ## RUN THE API
 CLONE THE REPO
