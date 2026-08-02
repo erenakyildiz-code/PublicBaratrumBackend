@@ -60,7 +60,7 @@ public static class METADATA
     public static readonly string BRAIN = Meta("BrainEndpoint", "http://127.0.0.1:8080");
     public static readonly string EARS  = Meta("EarsEndpoint",  "http://127.0.0.1:8000");
     public static readonly string MOUTH = Meta("MouthEndpoint", "https://devil-macbook-air-2.tail1737c0.ts.net");
-    public static readonly bool RUNNINGLOCAL = MetaBool("RunningLocal", false);
+    public static readonly bool RUNNINGLOCAL = MetaBool("RunningLocal", true);
 
     public static readonly Dictionary<string, string> BRAIN_HEADERS = MetaHeaders("BrainHeaders");
     public static readonly Dictionary<string, string> EARS_HEADERS  = MetaHeaders("EarsHeaders");
