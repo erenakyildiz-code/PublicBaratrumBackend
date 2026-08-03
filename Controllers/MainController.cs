@@ -649,12 +649,11 @@ public class MainController : ControllerBase
             var sessionMemoriesBlock = newlyExtractedFacts.Any()
                 ? $"<already_extracted_this_session>\n{string.Join("\n", newlyExtractedFacts)}\n</already_extracted_this_session>\n"
                 : "";
+            var systemPrompt = "You are a backend memory-deduplication processor. Your ONLY job is to extract new, substantial facts from conversational segments.";
 
-            var prompt = $@"<bos><start_of_turn>user
-                <persona_reference>
+            var userPrompt = $@"<persona_reference>
                 {sys}
                 </persona_reference>
-                You are a backend memory-deduplication processor. Your ONLY job is to extract new, substantial facts from the conversational segment below.
 
                 <existing_long_term_memory>
                 {baseLtmContext}
@@ -665,24 +664,34 @@ public class MainController : ControllerBase
                 {segmentTranscript}
                 </conversational_segment>
 
-                TASK: Extract net-new facts from the <conversational_segment>. 
+                TASK: Extract net-new facts from the <conversational_segment>.
                 RULES:
-                1. Output ONLY a bulleted list using '- '.
+                1. Start your response directly with the first bullet. Output ONLY a bulleted list using '- '.
                 2. Do not include casual greetings, filler conversation, or facts already present in the <existing_long_term_memory> or <already_extracted_this_session>.
                 3. Write in the third-person objective perspective.
-                4. If there are no substantial new facts, output exactly: '- No new substantial facts.'<end_of_turn>
-                <start_of_turn>model
-                ### NEW MEMORIES ###
-                -";
+                4. If there are no substantial new facts, output exactly: '- No new substantial facts.'";
 
-            var req = new { prompt, temperature = 0.1, repeat_penalty = 1.15, n_predict = 400, stop = new[] { "<end_of_turn>", "<eos>" } };
-            using var msg = new HttpRequestMessage(HttpMethod.Post, $"{METADATA.BRAIN}/completion"){Content = JsonContent.Create(req)}.WithHeaders(METADATA.BRAIN_HEADERS);
+            var req = new {
+                messages = new List<object> {
+                    new { role = "system", content = systemPrompt },
+                    new { role = "user", content = userPrompt }
+                },
+                temperature = 0.1,
+                top_p = 0.95,
+                min_p = 0.01,
+                repeat_penalty = 1.0,
+                max_tokens = 400,
+                chat_template_kwargs = new { enable_thinking = false }  // mechanical task, skip the 10s deliberation
+            };
+            using var msg = new HttpRequestMessage(HttpMethod.Post, $"{METADATA.BRAIN}/v1/chat/completions"){Content = JsonContent.Create(req)}.WithHeaders(METADATA.BRAIN_HEADERS);
 
             var res = await http.SendAsync(msg);
 
-
             var json = await res.Content.ReadFromJsonAsync<JsonElement>();
-            var content = json.GetProperty("content").GetString()?.Trim() ?? "";
+            var content = json.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString()?.Trim() ?? "";
+
+            // Belt-and-braces: strip <think> blocks if thinking leaks despite the flag
+            content = Regex.Replace(content, @"<think>.*?</think>", "", RegexOptions.Singleline | RegexOptions.IgnoreCase).Trim();
 
             if (!string.IsNullOrWhiteSpace(content) && !content.Contains("No new substantial facts", StringComparison.OrdinalIgnoreCase))
             {
