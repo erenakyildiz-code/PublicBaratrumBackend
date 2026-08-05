@@ -1,0 +1,43 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": ".NET Attach (Pick Process)",
+            "type": "coreclr",
+            "request": "attach",
+            "processId": "${command:pickProcess}",
+            "requireExactSource": false,
+            "justMyCode": false,
+            "enableStepFiltering": false,
+            "sourceLinkOptions": {
+                "enabled": true
+            }
+        },
+        {
+            "name": ".NET Attach (YourApp by Name)",
+            "type": "coreclr",
+            "request": "attach",
+            "processName": "YourApp", 
+            "requireExactSource": false,
+            "justMyCode": false,
+            "enableStepFiltering": false
+        },
+        {
+            "name": ".NET Launch (Development)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/bin/Debug/net10.0/AuthApp.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": false,
+            "env": {
+                "ASPNETCORE_ENVIRONMENT": "Development",
+                "ASPNETCORE_URLS": "http://localhost:5042"
+            },
+            "sourceFileMap": {
+                "/src": "${workspaceFolder}"
+            }
+        }
+    ]
+}

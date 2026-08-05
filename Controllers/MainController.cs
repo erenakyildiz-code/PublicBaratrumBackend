@@ -529,7 +529,7 @@ public class MainController : ControllerBase
                     if (idx != -1) cutoff = idx + state.Chunks[i].Length;
                 }
 
-                if (cutoff > 0 && cutoff < state.FinalText.Length) {
+                if (cutoff >= 0 && cutoff < state.FinalText.Length) {
                     var oldTurn = $"QT: {state.FinalText}";
                     var newTurn = $"QT: {state.FinalText[..cutoff].Trim()}-";
                     
