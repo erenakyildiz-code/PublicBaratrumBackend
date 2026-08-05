@@ -545,6 +545,19 @@ public class MainController : ControllerBase
     // ---------------------------------------------------------
     // MEMORY CONSOLIDATION
     // ---------------------------------------------------------
+    [HttpGet("/api/get-rem-cost")]
+    public async Task<IActionResult> GetRemCost()
+    {
+        string userId = GetUserId();
+        int stmCount = GetShortTermMemoryCount(userId);
+        decimal price = 0.02m * stmCount;
+
+        return Ok(new
+        {
+            short_term_memory_count = stmCount,
+            rem_sleep_price = price
+        });
+    }
     [HttpPost("/api/rem-sleep")]
     public async Task<IActionResult> RemSleep()
     {
@@ -552,6 +565,12 @@ public class MainController : ControllerBase
         var sysPath = Path.Combine(_storageRoot, "system.txt");
         var sys = System.IO.File.Exists(sysPath) ? await System.IO.File.ReadAllTextAsync(sysPath) : "";
 
+        int stmCount = GetShortTermMemoryCount(userId);
+        decimal price = 0.02m * stmCount;
+
+        bool paid = await BalanceCheckerConsumer(userId, price);
+        if (!paid)
+            return StatusCode(402, new { status = "error", message = "Insufficient balance." });
         // 1. Fetch STM Records
         var stmRecords = await _db.ShortTermMemories
             .Where(m => m.UserId == userId && m.IsConsumed == false)
@@ -1088,6 +1107,12 @@ public class MainController : ControllerBase
         balance.CurrentBalance -= amount;
         await _db.SaveChangesAsync();
         return true;
+    }
+    
+    private int GetShortTermMemoryCount(string userId)
+    {
+        return _db.ShortTermMemories
+            .Count(m => m.UserId == userId && m.IsConsumed == false);
     }
 
 
