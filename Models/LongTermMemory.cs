@@ -13,5 +13,7 @@ namespace Baratrum.Models
 
         public required long MemoryGenerationDate { get; set; } 
         public required string Memory {get;set;}
+        public required bool MemoryConsumed {get;set;}
+        public int? L2ID {get;set;} 
     }
 }

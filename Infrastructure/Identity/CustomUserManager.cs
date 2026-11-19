@@ -40,7 +40,7 @@ public class CustomUserManager : UserManager<ApplicationUser>
                 var newBalance = new Balance
                 {
                     UserId = user.Id,
-                    CurrentBalance = 20.00m,
+                    CurrentBalance = 1.00m,
                     PaidMoneyBefore = false
                 };
 

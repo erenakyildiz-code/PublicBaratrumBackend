@@ -7,6 +7,27 @@
     <AllowMissingPrunePackageData>true</AllowMissingPrunePackageData>
     <UserSecretsId>d694291a-80bd-4e3c-9644-2993da9cc84d</UserSecretsId>
   </PropertyGroup>
+
+  <PropertyGroup>
+    <BrainEndpoint Condition="'$(BrainEndpoint)' == ''">http://127.0.0.1:8080</BrainEndpoint>
+    <EarsEndpoint  Condition="'$(EarsEndpoint)' == ''">http://192.168.3.20:8080</EarsEndpoint>
+    <MouthEndpoint Condition="'$(MouthEndpoint)' == ''">http://192.168.3.20:8080</MouthEndpoint>
+    <JevEndpoint Condition="'$(JevEndpoint)' == ''">http://127.0.0.1:8000</JevEndpoint>
+    
+    <RunningLocal Condition="'$(RunningLocal)' == ''">true</RunningLocal>
+    <BrainHeaders Condition="'$(BrainHeaders)' == ''"></BrainHeaders>
+    <EarsHeaders  Condition="'$(EarsHeaders)' == ''"></EarsHeaders>
+    <MouthHeaders Condition="'$(MouthHeaders)' == ''"></MouthHeaders>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="BrainEndpoint" Value="$(BrainEndpoint)" />
+    <AssemblyMetadata Include="EarsEndpoint"  Value="$(EarsEndpoint)" />
+    <AssemblyMetadata Include="MouthEndpoint" Value="$(MouthEndpoint)" />
+    <AssemblyMetadata Include="RunningLocal" Value="$(RunningLocal)" />
+    <AssemblyMetadata Include="BrainHeaders" Value="$(BrainHeaders)" />
+    <AssemblyMetadata Include="EarsHeaders"  Value="$(EarsHeaders)" />
+    <AssemblyMetadata Include="MouthHeaders" Value="$(MouthHeaders)" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.8" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.4" />
@@ -23,7 +44,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
-  <ItemGroup>
+<ItemGroup>
   <Content Include="system.txt">
     <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     <Link>Storage\system.txt</Link>

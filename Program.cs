@@ -1,5 +1,4 @@
 using Baratrum.Data;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
 using Baratrum.Services;
@@ -7,7 +6,6 @@ using Baratrum.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -21,7 +19,7 @@ builder.Services.AddSwaggerGen(options =>
         Description = "Enter your valid token in the text input below.\r\n\r\nExample: 'eyJhbGci...'"
     });
 
-    // Use a delegate here to satisfy the OpenApiDocument requirRheement
+    // Use a delegate here to satisfy the OpenApiDocument requirement
     options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
     {
         {
@@ -42,6 +40,7 @@ builder.Services.AddIdentityApiEndpoints<ApplicationUser>(options => {
 
 .AddEntityFrameworkStores<AppDbContext>()
 .AddUserManager<CustomUserManager>();
+builder.Services.AddHttpClient<VastPricingService>();
 
 builder.Services.AddAuthentication();
 builder.Services.AddAuthorization();
@@ -71,11 +70,8 @@ builder.Services.AddHttpClient();
 builder.Services.AddControllers();
 
 var app = builder.Build();
-using (var scope = app.Services.CreateScope())
-{
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.Migrate();
-}
+
+// Enable classic Swagger middleware
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -84,6 +80,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseCors("BaratrumPolicy");
+app.UseStaticFiles();
 // Add Authentication and Authorization middleware
 app.UseWebSockets();
 app.Use(async (context, next) =>
@@ -105,12 +102,11 @@ app.MapIdentityApi<ApplicationUser>()
             context.HttpContext.Request.Path.Equals("/confirmEmail", StringComparison.OrdinalIgnoreCase)) && 
             !METADATA.RUNNINGLOCAL )
        {
-           return Results.NotFound("");
+           return Results.NotFound("Go away filthy hacker, shoo");
        }
        return await next(context);
    });
 
 
-
 app.MapControllers();
-app.Run();
+app.Run(); 

@@ -22,6 +22,41 @@ namespace Baratrum.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("Baratrum.Models.AgenticContextRecord", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Context")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("ContextGenerationDate")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ContextName")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Goal")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "ContextName")
+                        .IsUnique();
+
+                    b.ToTable("AgenticContextRecords");
+                });
+
             modelBuilder.Entity("Baratrum.Models.ApplicationUser", b =>
                 {
                     b.Property<string>("Id")
@@ -39,6 +74,9 @@ namespace Baratrum.Migrations
                         .HasColumnType("nvarchar(256)");
 
                     b.Property<bool>("EmailConfirmed")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("FilterEnabled")
                         .HasColumnType("bit");
 
                     b.Property<string>("Language")
@@ -76,6 +114,9 @@ namespace Baratrum.Migrations
                     b.Property<string>("UserName")
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("tgChatId")
+                        .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
 
@@ -116,7 +157,39 @@ namespace Baratrum.Migrations
                     b.ToTable("Balances");
                 });
 
-            modelBuilder.Entity("Baratrum.Models.LongTermMemory", b =>
+            modelBuilder.Entity("Baratrum.Models.L2", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int?>("L3ID")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Memory")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("MemoryConsumed")
+                        .HasColumnType("bit");
+
+                    b.Property<long>("MemoryGenerationDate")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("L2Cache");
+                });
+
+            modelBuilder.Entity("Baratrum.Models.L3", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -127,6 +200,41 @@ namespace Baratrum.Migrations
                     b.Property<string>("Memory")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("MemoryConsumed")
+                        .HasColumnType("bit");
+
+                    b.Property<long>("MemoryGenerationDate")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("L3Cache");
+                });
+
+            modelBuilder.Entity("Baratrum.Models.LongTermMemory", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int?>("L2ID")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Memory")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("MemoryConsumed")
+                        .HasColumnType("bit");
 
                     b.Property<long>("MemoryGenerationDate")
                         .HasColumnType("bigint");
@@ -335,12 +443,45 @@ namespace Baratrum.Migrations
                     b.ToTable("AspNetUserTokens", (string)null);
                 });
 
+            modelBuilder.Entity("Baratrum.Models.AgenticContextRecord", b =>
+                {
+                    b.HasOne("Baratrum.Models.ApplicationUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("Baratrum.Models.Balance", b =>
                 {
                     b.HasOne("Baratrum.Models.ApplicationUser", "User")
                         .WithMany()
                         .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Baratrum.Models.L2", b =>
+                {
+                    b.HasOne("Baratrum.Models.ApplicationUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Baratrum.Models.L3", b =>
+                {
+                    b.HasOne("Baratrum.Models.ApplicationUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.Navigation("User");
@@ -362,7 +503,7 @@ namespace Baratrum.Migrations
                     b.HasOne("Baratrum.Models.ApplicationUser", "User")
                         .WithMany()
                         .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.Navigation("User");

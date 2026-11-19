@@ -1,27 +1,13 @@
-# Build outputs
-**/bin/
-**/obj/
-**/out/
-**/publish/
+# Ignore sensitive production settings
+appsettings.Production.json
 
-# IDE / OS
-.vs/
-.vscode/
+# Ignore user secrets (local development)
+.microsoft/usersecrets/
+secrets.json
+
+# Standard build/publish artifacts to keep images clean
+bin/
+obj/
 *.user
-*.suo
-.DS_Store
-Thumbs.db
-
-# Git
-.git/
-.gitignore
-
-# Docker
-Dockerfile*
-docker-compose*
-.dockerignore
-
-# Logs / Temp
-*.log
-logs/
-tmp/
+*.userosscache
+*.sln.docstates

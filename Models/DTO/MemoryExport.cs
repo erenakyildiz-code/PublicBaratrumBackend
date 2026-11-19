@@ -17,4 +17,5 @@ public class LongTermMemoryDto
 {
     public long MemoryGenerationDate { get; set; }
     public required string Memory { get; set; }
+    public required bool MemoryConsumed {get;set;}
 }
