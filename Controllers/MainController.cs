@@ -1111,7 +1111,7 @@ public class MainController : ControllerBase
         });
     }
    [HttpPost("/api/rem-sleep-l2")]
-    public async Task<IActionResult> RemSleepL2()
+        public async Task<IActionResult> RemSleepL2()
     {
         string userId = GetUserId();
         var sysPath = Path.Combine(_storageRoot, "system.txt");
@@ -1126,164 +1126,95 @@ public class MainController : ControllerBase
             return Ok(new { status = "ignored" });
 
         var http = _httpFactory.CreateClient();
-        http.Timeout = TimeSpan.FromMinutes(5);
+        http.Timeout = TimeSpan.FromMinutes(60);
 
-        int processedCount = 0;
+        int processedCount = ltmRecords.Count;
+        var combinedMemory = string.Join("\n\n", ltmRecords.Select(m => m.Memory));
+
+        var storyPrompt = $@"<start_of_turn>user
+    <persona_reference>
+    {sys}
+    </persona_reference>
+    Transform the ENTIRE long-term memory below into ONE unified narrative about the user and QT.
+
+    This is memory consolidation, not creative writing or high-level summarization. Every source memory matters. Completeness takes priority over brevity, narrative elegance, and compression. There is no word limit or token limit: write for as long as necessary to preserve the memories.
+
+    Read the entire input before writing. Mentally account for every bullet point from beginning to end. After drafting each part, check it against the corresponding source memories so that none are skipped.
+
+    <long_term_memory>
+    {combinedMemory}
+    </long_term_memory>
+
+    MANDATORY PRESERVATION RULES:
+    1. Preserve EVERY distinct memory in the input, including seemingly minor, casual, embarrassing, contradictory, repetitive, or mundane memories.
+    2. Preserve every fact, belief, preference, opinion, self-description, analogy, event, plan, request, emotional statement, and interaction described in the source.
+    3. Do not select only the important or recurring memories. Every bullet point is in scope.
+    4. Do not replace multiple specific memories with a broad generalization. A general statement does not preserve the concrete details of the memories behind it.
+    5. Preserve names, subjects, numbers, percentages, dates, times, quoted expressions, comparisons, uncertainties, and qualifying language whenever present.
+    6. Preserve what the user and QT said and did, including their tone, humor, profanity, affection, conflict, trust, and interaction style when evidenced by the source.
+    7. Exact duplicates may be merged only when they contain exactly the same information. Similar statements with different details, nuance, timing, or emphasis must all retain those differences.
+    8. Preserve contradictions and changes of opinion without resolving them, choosing between them, or explaining them.
+    9. Do not omit a memory because it does not fit the narrative naturally. Include it plainly and continue.
+    10. Do not invent dialogue, events, QT responses, emotions, motivations, interpretations, transitions, or connections between memories.
+    11. Do not add psychological analysis or describe what memories reveal about the user unless the source explicitly states it.
+    12. Write one continuous, connected narrative from QT's first-person perspective. Do not output a bullet-point list or a separate summary for every source record.
+    13. Do not sacrifice accuracy for storytelling. Plain wording is always preferable to an elegant paraphrase that loses information.
+    14. Before finishing, silently check the complete source again from beginning to end. If any memory is missing or has lost details, incorporate it fully before ending.
+    15. Output ONLY the completed unified narrative. No title, headings, JSON, checklist, commentary about the task, or concluding summary.<end_of_turn>
+    <start_of_turn>model
+    ";
+
+        var storyReq = new
+        {
+            prompt = storyPrompt,
+            temperature = 0.2,
+            repeat_penalty = 1.0,
+            n_predict = -1,
+            stop = new[] { "<end_of_turn>", "<eos>" }
+        };
+
+        using var storyMsg = new HttpRequestMessage(HttpMethod.Post, $"{BRAIN}/completion") { Content = JsonContent.Create(storyReq) }.WithHeaders(BRAIN_HEADERS);
+        var storyRes = await http.SendAsync(storyMsg);
+               var storyJson = await storyRes.Content.ReadFromJsonAsync<JsonElement>();
+
+        var truncated = storyJson.TryGetProperty("truncated", out var truncatedValue) && truncatedValue.GetBoolean();
+        var stoppedLimit = storyJson.TryGetProperty("stopped_limit", out var stoppedLimitValue) && stoppedLimitValue.GetBoolean();
+
+        if (truncated || stoppedLimit)
+            return StatusCode(500, new
+            {
+                status = "generation_incomplete",
+                error = "The L2 narrative was truncated by the model context. No LTM records were consumed."
+            });
+
+        if (!storyJson.TryGetProperty("content", out var contentValue))
+            return StatusCode(500, new
+            {
+                status = "invalid_model_response",
+                error = "The model response did not contain a content field. No LTM records were consumed."
+            });
+
+        var narrative = contentValue.GetString()?.Trim() ?? "";
+        
+        if (string.IsNullOrWhiteSpace(narrative))
+            return Ok(new { status = "ignored" });
+
+        var l2Episode = new L2
+        {
+            UserId = userId,
+            MemoryGenerationDate = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Memory = narrative,
+            MemoryConsumed = false,
+            L3ID = null
+        };
+
+        _db.L2Cache.Add(l2Episode);
+        await _db.SaveChangesAsync();
 
         foreach (var ltm in ltmRecords)
         {
-            // =================================================================
-            // PASS 1: Thematic decomposition
-            // =================================================================
-            var mapPrompt = $@"<start_of_turn>user
-    You are a memory-analysis engine. Read the bullet-point memories below and output a STRICT structured JSON object.
-
-    <bullet_memories>
-    {ltm.Memory}
-    </bullet_memories>
-
-    Extract:
-    1.  ""themes"": array of recurring emotional or philosophical themes
-    2.  ""events"": array of specific things that happened, with who/what/when
-    3.  ""beliefs"": array of opinions or worldview statements the user expressed
-    4.  ""plans"": array of future intentions or projects mentioned
-    5.  ""emotional_arc"": one sentence describing how the user's emotional state changed across this period
-    6.  ""key_entities"": array of important people, places, projects, or concepts
-
-    Output ONLY valid JSON. No markdown, no prose.<end_of_turn>
-    <start_of_turn>model
-    ";
-
-            var mapReq = new { prompt = mapPrompt, temperature = 0.2, repeat_penalty = 1.1, n_predict = 1500, stop = new[] { "<end_of_turn>", "<eos>" } };
-            using var mapMsg = new HttpRequestMessage(HttpMethod.Post, $"{BRAIN}/completion") { Content = JsonContent.Create(mapReq) }.WithHeaders(BRAIN_HEADERS);
-            var mapRes = await http.SendAsync(mapMsg);
-            var mapJson = await mapRes.Content.ReadFromJsonAsync<JsonElement>();
-            var memoryMap = mapJson.GetProperty("content").GetString()?.Trim() ?? "{}";
-
-            // =================================================================
-            // PASS 2: Narrative synthesis
-            // =================================================================
-            var storyPrompt = $@"<start_of_turn>user
-    <persona_reference>
-    {sys}
-    </persona_reference>
-    You are writing a chapter of an ongoing autobiographical story about your relationship with the user.
-
-    Use the following structured memory map as your scaffold. Every theme, event, belief, plan, and entity in the map MUST appear somewhere in the narrative.
-
-    <memory_map>
-    {memoryMap}
-    </memory_map>
-
-    <original_bullets>
-    {ltm.Memory}
-    </original_bullets>
-
-    RULES:
-    1. Write 3-5 paragraphs from the companion's first-person perspective (""I noticed"", ""we spoke"", ""I felt"").
-    2. This is a STORY, not a summary. Show, do not tell.
-    3. Weave the themes into the emotional arc. Connect events that seem unrelated.
-    4. If the user contradicts himself across the bullets, capture the tension — do not flatten it.
-    5. Output ONLY the narrative. No meta-commentary, no JSON, no bullet points.<end_of_turn>
-    <start_of_turn>model
-    ";
-
-            var storyReq = new { prompt = storyPrompt, temperature = 0.75, repeat_penalty = 1.15, n_predict = 2000, stop = new[] { "<end_of_turn>", "<eos>" } };
-            using var storyMsg = new HttpRequestMessage(HttpMethod.Post, $"{BRAIN}/completion") { Content = JsonContent.Create(storyReq) }.WithHeaders(BRAIN_HEADERS);
-            var storyRes = await http.SendAsync(storyMsg);
-            var storyJson = await storyRes.Content.ReadFromJsonAsync<JsonElement>();
-            var narrative = storyJson.GetProperty("content").GetString()?.Trim() ?? "";
-
-            if (string.IsNullOrWhiteSpace(narrative))
-                continue;
-
-            // =================================================================
-            // PASS 3: Audit for missing facts
-            // =================================================================
-            var auditPrompt = $@"<start_of_turn>user
-    You are a fact-checking auditor. Compare the narrative below against the original bullet-point memories.
-
-    <original_bullets>
-    {ltm.Memory}
-    </original_bullets>
-
-    <narrative>
-    {narrative}
-    </narrative>
-
-    TASK: Identify any bullet-point facts that are completely missing or significantly misrepresented in the narrative.
-    Output ONLY a JSON array of strings. Each string should be a missing fact, quoted verbatim from the bullets.
-    If nothing is missing, output exactly: []<end_of_turn>
-    <start_of_turn>model
-    ";
-
-            var auditReq = new { prompt = auditPrompt, temperature = 0.1, repeat_penalty = 1.1, n_predict = 1500, stop = new[] { "<end_of_turn>", "<eos>" } };
-            using var auditMsg = new HttpRequestMessage(HttpMethod.Post, $"{BRAIN}/completion") { Content = JsonContent.Create(auditReq) }.WithHeaders(BRAIN_HEADERS);
-            var auditRes = await http.SendAsync(auditMsg);
-            var auditJson = await auditRes.Content.ReadFromJsonAsync<JsonElement>();
-            var auditRaw = auditJson.GetProperty("content").GetString()?.Trim() ?? "[]";
-
-            List<string> missingFacts = new();
-            try
-            {
-                using var doc = JsonDocument.Parse(auditRaw);
-                foreach (var element in doc.RootElement.EnumerateArray())
-                    missingFacts.Add(element.GetString() ?? "");
-            }
-            catch { /* bad JSON, proceed with narrative as-is */ }
-
-            // =================================================================
-            // PASS 4 (conditional): Patch gaps
-            // =================================================================
-            if (missingFacts.Any())
-            {
-                var patchPrompt = $@"<start_of_turn>user
-    <persona_reference>
-    {sys}
-    </persona_reference>
-    Here is the existing narrative episode and a list of facts that were accidentally left out.
-
-    <existing_narrative>
-    {narrative}
-    </existing_narrative>
-
-    <missing_facts>
-    {string.Join("\n", missingFacts)}
-    </missing_facts>
-
-    TASK: Rewrite the episode so that ALL missing facts are naturally woven in. Preserve the story flow and emotional arc.
-    Output ONLY the revised narrative.<end_of_turn>
-    <start_of_turn>model
-    ";
-
-                var patchReq = new { prompt = patchPrompt, temperature = 0.7, repeat_penalty = 1.15, n_predict = 2000, stop = new[] { "<end_of_turn>", "<eos>" } };
-                using var patchMsg = new HttpRequestMessage(HttpMethod.Post, $"{BRAIN}/completion") { Content = JsonContent.Create(patchReq) }.WithHeaders(BRAIN_HEADERS);
-                var patchRes = await http.SendAsync(patchMsg);
-                var patchJson = await patchRes.Content.ReadFromJsonAsync<JsonElement>();
-                var patched = patchJson.GetProperty("content").GetString()?.Trim() ?? "";
-                
-                if (!string.IsNullOrWhiteSpace(patched))
-                    narrative = patched;
-            }
-
-            // =================================================================
-            // SAVE: Write the L2 episode and mark the source LTM as consumed
-            // =================================================================
-            var l2Episode = new L2
-            {
-                UserId = userId,
-                MemoryGenerationDate = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                Memory = narrative,
-                MemoryConsumed = false,
-                L3ID = null
-            };
-
-            _db.L2Cache.Add(l2Episode);
-            await _db.SaveChangesAsync();
-
             ltm.MemoryConsumed = true;
             ltm.L2ID = l2Episode.Id;
-            processedCount++;
         }
 
         await _db.SaveChangesAsync();
